@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Threat Detection System</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            color: #333;
+            background-color: #f5f7fa;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background-color: #042f54;
+            color: white;
+            padding: 20px 0;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1 {
+            margin: 0;
+            font-size: 2.5rem;
+        }
+        
+        .subtitle {
+            font-size: 1.2rem;
+            opacity: 0.9;
+            margin-top: 10px;
+        }
+        
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 25px;
+            margin-top: 40px;
+        }
+        
+        .card {
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+            padding: 25px;
+            transition: transform 0.3s, box-shadow 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+        }
+        
+        .card-icon {
+            font-size: 3rem;
+            margin-bottom: 20px;
+            color: #042f54;
+        }
+        
+        .card h2 {
+            margin-top: 0;
+            font-size: 1.8rem;
+            color: #042f54;
+        }
+        
+        .card p {
+            color: #666;
+            margin-bottom: 25px;
+        }
+        
+        .btn {
+            display: inline-block;
+            background-color: #042f54;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: background-color 0.3s;
+            margin-right: 10px;
+        }
+        
+        .btn:hover {
+            background-color: #0a4b7c;
+        }
+        
+        .btn-secondary {
+            background-color: #e2e6ea;
+            color: #333;
+        }
+        
+        .btn-secondary:hover {
+            background-color: #d1d6db;
+        }
+        
+        .btn-danger {
+            background-color: #dc3545;
+        }
+        
+        .btn-danger:hover {
+            background-color: #c82333;
+        }
+        
+        .status-badge {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        
+        .status-running {
+            background-color: #28a745;
+            color: white;
+        }
+        
+        .status-stopped {
+            background-color: #dc3545;
+            color: white;
+        }
+        
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            border-radius: 4px;
+            color: white;
+            font-weight: 500;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 1000;
+            display: none;
+        }
+        
+        .notification-success {
+            background-color: #28a745;
+        }
+        
+        .notification-error {
+            background-color: #dc3545;
+        }
+        
+        .card-buttons {
+            display: flex;
+            justify-content: flex-start;
+        }
+        
+        footer {
+            text-align: center;
+            margin-top: 50px;
+            padding: 20px;
+            color: #666;
+            border-top: 1px solid #eee;
+        }
+        
+        /* Loading spinner */
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .loading {
+            position: relative;
+            opacity: 0.7;
+            pointer-events: none;
+        }
+        
+        .loading::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 255, 0.4);
+            z-index: 1;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Audio Threat Detection System</h1>
+            <div class="subtitle">Real-time monitoring and alert system for emergency situations</div>
+        </div>
+    </header>
+    
+    <div class="container">
+        <div class="dashboard">
+            <div class="card" id="admin-card">
+                <div class="status-badge" id="admin-status">Checking...</div>
+                <div class="card-icon">⚙️</div>
+                <h2>Admin Panel</h2>
+                <p>Manage system settings, emergency contacts, and view event logs. Configure notification preferences and system behavior.</p>
+                <div class="card-buttons">
+                    <button class="btn" onclick="startProcess('admin')" id="start-admin">Launch Admin Panel</button>
+                    <button class="btn btn-danger" onclick="stopProcess('admin')" id="stop-admin" style="display: none;">Stop</button>
+                </div>
+            </div>
+            
+            <div class="card" id="train-card">
+                <div class="status-badge" id="train-status">Checking...</div>
+                <div class="card-icon">🧠</div>
+                <h2>Model Training</h2>
+                <p>Train and fine-tune the audio detection model with custom datasets. Improve detection accuracy for specific environments.</p>
+                <div class="card-buttons">
+                    <button class="btn" onclick="startProcess('train')" id="start-train">Launch Training Panel</button>
+                    <button class="btn btn-danger" onclick="stopProcess('train')" id="stop-train" style="display: none;">Stop</button>
+                </div>
+            </div>
+            
+            <div class="card" id="detection-card">
+                <div class="status-badge" id="detection-status">Checking...</div>
+                <div class="card-icon">🎯</div>
+                <h2>Threat Detection</h2>
+                <p>Start real-time audio monitoring to detect emergency sounds and threats. Receive alerts and notifications when events are detected.</p>
+                <div class="card-buttons">
+                    <button class="btn" onclick="startProcess('detection')" id="start-detection">Start Detection System</button>
+                    <button class="btn btn-danger" onclick="stopProcess('detection')" id="stop-detection" style="display: none;">Stop</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <footer>
+        <div class="container">
+            <p>Audio Threat Detection System &copy; 2025 | Developed by Abil Biju, Chackochan Jose, Alan Antony</p>
+        </div>
+    </footer>
+    
+    <div class="notification" id="notification"></div>
+    
+    <script>
+        // Update status badges and buttons based on running processes
+        function updateStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    Object.keys(data).forEach(process => {
+                        const status = data[process];
+                        const statusBadge = document.getElementById(`${process}-status`);
+                        const startButton = document.getElementById(`start-${process}`);
+                        const stopButton = document.getElementById(`stop-${process}`);
+                        
+                        if (status === 'running') {
+                            statusBadge.textContent = 'Running';
+                            statusBadge.className = 'status-badge status-running';
+                            startButton.disabled = true;
+                            stopButton.style.display = 'inline-block';
+                        } else {
+                            statusBadge.textContent = 'Stopped';
+                            statusBadge.className = 'status-badge status-stopped';
+                            startButton.disabled = false;
+                            stopButton.style.display = 'none';
+                        }
+                    });
+                })
+                .catch(error => {
+                    console.error('Error fetching status:', error);
+                    showNotification('Error checking system status', 'error');
+                });
+        }
+        
+        // Start a process
+        function startProcess(processType) {
+            const button = document.getElementById(`start-${processType}`);
+            const card = document.getElementById(`${processType}-card`);
+            
+            // Add loading state
+            button.innerHTML = `Starting ${getProcessName(processType)}...<div class="spinner"></div>`;
+            button.disabled = true;
+            card.classList.add('loading');
+            
+            fetch(`/api/start/${processType}`, { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    // Remove loading state
+                    button.innerHTML = `Launch ${getProcessName(processType)}`;
+                    card.classList.remove('loading');
+                    
+                    if (data.success) {
+                        showNotification(data.message, 'success');
+                    } else {
+                        button.disabled = false;
+                        showNotification(`Error: ${data.message}`, 'error');
+                    }
+                    
+                    // Update status
+                    updateStatus();
+                })
+                .catch(error => {
+                    // Remove loading state
+                    button.innerHTML = `Launch ${getProcessName(processType)}`;
+                    button.disabled = false;
+                    card.classList.remove('loading');
+                    
+                    showNotification(`Error starting ${getProcessName(processType)}`, 'error');
+                    console.error('Error:', error);
+                });
+        }
+        
+        // Stop a process
+        function stopProcess(processType) {
+            const button = document.getElementById(`stop-${processType}`);
+            const card = document.getElementById(`${processType}-card`);
+            
+            // Add loading state
+            button.innerHTML = `Stopping...<div class="spinner"></div>`;
+            button.disabled = true;
+            card.classList.add('loading');
+            
+            fetch(`/api/stop/${processType}`, { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    // Remove loading state
+                    button.innerHTML = 'Stop';
+                    button.disabled = false;
+                    card.classList.remove('loading');
+                    
+                    if (data.success) {
+                        showNotification(data.message, 'success');
+                    } else {
+                        showNotification(`Error: ${data.message}`, 'error');
+                    }
+                    
+                    // Update status
+                    updateStatus();
+                })
+                .catch(error => {
+                    // Remove loading state
+                    button.innerHTML = 'Stop';
+                    button.disabled = false;
+                    card.classList.remove('loading');
+                    
+                    showNotification(`Error stopping ${getProcessName(processType)}`, 'error');
+                    console.error('Error:', error);
+                });
+        }
+        
+        // Show notification
+        function showNotification(message, type) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = `notification notification-${type}`;
+            notification.style.display = 'block';
+            
+            // Hide after 5 seconds
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 5000);
+        }
+        
+        // Get friendly name for process type
+        function getProcessName(processType) {
+            switch (processType) {
+                case 'admin': return 'Admin Panel';
+                case 'train': return 'Training Panel';
+                case 'detection': return 'Detection System';
+                default: return processType;
+            }
+        }
+        
+        // Check status when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            updateStatus();
+            
+            // Periodically check status
+            setInterval(updateStatus, 5000);
+        });
+        
+        // Handle page unload
+        window.addEventListener('beforeunload', function() {
+            // Optional: you could send a request to stop all processes here
+            // But this might not always execute reliably
+        });
+    </script>
+</body>
+</html>
