@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Event Detection</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .event-item {
+            padding: 10px;
+            margin-bottom: 5px;
+            border-left: 4px solid #ccc;
+            background-color: #f8f9fa;
+        }
+        .event-item.danger {
+            border-left: 4px solid #dc3545;
+            background-color: #f8d7da;
+        }
+        #visualizer {
+            width: 100%;
+            height: 150px;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            margin-bottom: 20px;
+        }
+        .recording {
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1 class="mb-4">Live Audio Event Detection</h1>
+        
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card mb-4">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">Audio Capture</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="visualizer"></canvas>
+                        <div class="d-flex justify-content-between mb-3">
+                            <button id="startBtn" class="btn btn-success">Start Recording</button>
+                            <button id="stopBtn" class="btn btn-danger" disabled>Stop Recording</button>
+                            <div class="d-flex align-items-center">
+                                <div id="status-indicator" class="rounded-circle me-2" style="width: 15px; height: 15px; background-color: #dc3545;"></div>
+                                <span id="status-text">Not Recording</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Detected Events</h5>
+                        <div>
+                            <button id="clear-events" class="btn btn-sm btn-outline-light">Clear</button>
+                            <span id="connection-status" class="badge bg-success ms-2">Connected</span>
+                        </div>
+                    </div>
+                    <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                        <div id="events-panel" class="list-group">
+                            <!-- Events will be added here -->
+                            <div class="list-group-item text-center text-muted">
+                                No events detected yet
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0">Stats & Controls</h5>
+                    </div>
+                    <div class="card-body">
+                        <button id="test-detection-btn" class="btn btn-warning mb-2 w-100">Test Detection</button>
+                        <button id="test-email-btn" class="btn btn-secondary mb-2 w-100">Test Email</button>
+                        
+                        <hr>
+                        <div class="d-flex justify-content-between mb-2">
+                            <span>Total Events:</span>
+                            <span id="total-events-count">0</span>
+                        </div>
+                        <div id="event-type-stats">
+                            <!-- Event type stats will go here -->
+                        </div>
+                        
+                        <hr>
+                        <div class="form-group mb-2">
+                            <label for="threshold-slider" class="form-label">Detection Threshold: <span id="threshold-value">0.70</span></label>
+                            <input type="range" class="form-range" id="threshold-slider" min="0" max="1" step="0.05" value="0.70">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <script>
+        // Configuration
+        const SAMPLE_RATE = 44100;
+        const CHUNK_SIZE = 16384; // ~0.37s at 44.1kHz
+        let DETECTION_THRESHOLD = 0.70;
+        
+        // Audio context and stream variables
+        let audioContext;
+        let microphone;
+        let analyzer;
+        let recorder;
+        let isRecording = false;
+        let socket;
+        let eventsReceived = 0;
+        let eventsByType = {};
+        
+        // DOM elements
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const statusIndicator = document.getElementById('status-indicator');
+        const statusText = document.getElementById('status-text');
+        const visualizer = document.getElementById('visualizer');
+        const visualizerCtx = visualizer.getContext('2d');
+        const thresholdSlider = document.getElementById('threshold-slider');
+        const thresholdValue = document.getElementById('threshold-value');
+        
+        // Canvas setup
+        visualizer.width = visualizer.offsetWidth;
+        visualizer.height = visualizer.offsetHeight;
+        
+        // Initialize Socket.IO
+        function initSocketIO() {
+            socket = io();
+            
+            socket.on('connect', () => {
+                console.log('Connected to server');
+                document.getElementById('connection-status').className = 'badge bg-success ms-2';
+                document.getElementById('connection-status').textContent = 'Connected';
+            });
+            
+            socket.on('disconnect', () => {
+                console.log('Disconnected from server');
+                document.getElementById('connection-status').className = 'badge bg-danger ms-2';
+                document.getElementById('connection-status').textContent = 'Disconnected';
+            });
+            
+            socket.on('detection_event', (data) => {
+                console.log('Detection event received:', data);
+                displayEvent(data);
+            });
+            
+            socket.on('server_test', (data) => {
+                console.log('Server test received:', data);
+            });
+        }
+        
+        // Start recording
+        async function startRecording() {
+            try {
+                // Get permission for audio
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Create audio context
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SAMPLE_RATE });
+                
+                // Create microphone source
+                microphone = audioContext.createMediaStreamSource(stream);
+                
+                // Create analyzer for visualization
+                analyzer = audioContext.createAnalyser();
+                analyzer.fftSize = 2048;
+                microphone.connect(analyzer);
+                
+                // Create processor for audio data
+                const bufferSize = 4096;
+                const processorNode = audioContext.createScriptProcessor(bufferSize, 1, 1);
+                
+                // Connect processor
+                analyzer.connect(processorNode);
+                processorNode.connect(audioContext.destination);
+                
+                // Create buffer for storing audio
+                let audioChunks = new Float32Array(CHUNK_SIZE);
+                let chunkPosition = 0;
+                
+                // Process audio data
+                processorNode.onaudioprocess = function(e) {
+                    const input = e.inputBuffer.getChannelData(0);
+                    
+                    // Visualize
+                    visualizeAudio();
+                    
+                    // Add input to chunks
+                    for (let i = 0; i < input.length; i++) {
+                        if (chunkPosition < CHUNK_SIZE) {
+                            audioChunks[chunkPosition++] = input[i];
+                        }
+                    }
+                    
+                    // If buffer is full, send to server
+                    if (chunkPosition >= CHUNK_SIZE) {
+                        if (socket && socket.connected) {
+                            // Send the chunk to the server
+                            socket.emit('audio_chunk', {
+                                audio: audioChunks.buffer
+                            });
+                        }
+                        
+                        // Reset buffer
+                        chunkPosition = 0;
+                        audioChunks = new Float32Array(CHUNK_SIZE);
+                    }
+                };
+                
+                // Store processor to be able to disconnect later
+                recorder = processorNode;
+                
+                // Update UI
+                isRecording = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                statusIndicator.style.backgroundColor = '#28a745';
+                statusText.textContent = 'Recording';
+                visualizer.classList.add('recording');
+                
+                // Start animation loop
+                requestAnimationFrame(visualizeAudio);
+                
+            } catch (error) {
+                console.error('Error starting recording:', error);
+                alert('Error accessing microphone: ' + error.message);
+            }
+        }
+        
+        // Stop recording
+        function stopRecording() {
+            if (microphone) {
+                microphone.disconnect();
+            }
+            
+            if (recorder) {
+                recorder.disconnect();
+            }
+            
+            if (audioContext) {
+                // audioContext.close();
+            }
+            
+            // Update UI
+            isRecording = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            statusIndicator.style.backgroundColor = '#dc3545';
+            statusText.textContent = 'Not Recording';
+            visualizer.classList.remove('recording');
+            
+            // Clear visualizer
+            visualizerCtx.clearRect(0, 0, visualizer.width, visualizer.height);
+        }
+        
+        // Visualize audio
+        function visualizeAudio() {
+            if (!analyzer || !isRecording) return;
+            
+            // Get frequency data
+            const bufferLength = analyzer.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyzer.getByteFrequencyData(dataArray);
+            
+            // Clear canvas
+            visualizerCtx.clearRect(0, 0, visualizer.width, visualizer.height);
+            
+            // Draw frequency bars
+            const barWidth = (visualizer.width / bufferLength) * 2.5;
+            let x = 0;
+            
+            for (let i = 0; i < bufferLength; i++) {
+                const barHeight = (dataArray[i] / 255) * visualizer.height;
+                
+                // Use gradient based on frequency
+                const gradient = visualizerCtx.createLinearGradient(0, 0, 0, visualizer.height);
+                gradient.addColorStop(0, '#28a745');
+                gradient.addColorStop(1, '#17a2b8');
+                
+                visualizerCtx.fillStyle = gradient;
+                visualizerCtx.fillRect(x, visualizer.height - barHeight, barWidth, barHeight);
+                
+                x += barWidth + 1;
+            }
+            
+            if (isRecording) {
+                requestAnimationFrame(visualizeAudio);
+            }
+        }
+        
+        // Display event on UI
+        function displayEvent(eventData) {
+            // Create event element
+            const eventDiv = document.createElement('div');
+            eventDiv.className = 'list-group-item d-flex justify-content-between align-items-center';
+            
+            // Add danger class for non-environment events
+            if (eventData.event.toLowerCase() !== 'env_audio' && 
+                eventData.event.toLowerCase() !== 'environment' && 
+                eventData.event.toLowerCase() !== 'ambient') {
+                eventDiv.className += ' list-group-item-danger';
+            }
+            
+            // Format time
+            const time = new Date(eventData.timestamp * 1000).toLocaleTimeString();
+            
+            // Create main content
+            const mainContent = document.createElement('div');
+            
+            // Event name with confidence
+            const eventName = document.createElement('div');
+            eventName.className = 'fw-bold';
+            eventName.textContent = eventData.event;
+            mainContent.appendChild(eventName);
+            
+            // Details
+            const details = document.createElement('div');
+            details.className = 'small text-muted';
+            details.textContent = `Confidence: ${(eventData.confidence * 100).toFixed(1)}%`;
+            if (eventData.consistency) {
+                details.textContent += ` | Consistency: ${eventData.consistency}`;
+            }
+            mainContent.appendChild(details);
+            
+            // Add main content to event div
+            eventDiv.appendChild(mainContent);
+            
+            // Add time badge
+            const timeBadge = document.createElement('span');
+            timeBadge.className = 'badge bg-secondary';
+            timeBadge.textContent = time;
+            eventDiv.appendChild(timeBadge);
+            
+            // Add to events panel
+            const eventsPanel = document.getElementById('events-panel');
+            
+            // Remove "no events" message if it exists
+            const noEvents = eventsPanel.querySelector('.text-muted');
+            if (noEvents) {
+                eventsPanel.removeChild(noEvents);
+            }
+            
+            // Add the new event at the top
+            eventsPanel.insertBefore(eventDiv, eventsPanel.firstChild);
+            
+            // Limit number of displayed events
+            while (eventsPanel.children.length > 50) {
+                eventsPanel.removeChild(eventsPanel.lastChild);
+            }
+            
+            // Update stats
+            updateEventStats(eventData.event);
+        }
+        
+        // Update event statistics
+        function updateEventStats(eventType) {
+            eventsReceived++;
+            
+            // Update event type counter
+            if (!eventsByType[eventType]) {
+                eventsByType[eventType] = 0;
+            }
+            eventsByType[eventType]++;
+            
+            // Update UI
+            document.getElementById('total-events-count').textContent = eventsReceived;
+            
+            // Clear existing stats
+            const statsDiv = document.getElementById('event-type-stats');
+            statsDiv.innerHTML = '';
+            
+            // Add event type stats
+            Object.keys(eventsByType).sort().forEach(type => {
+                const count = eventsByType[type];
+                const row = document.createElement('div');
+                row.className = 'd-flex justify-content-between mb-1';
+                
+                const typeSpan = document.createElement('span');
+                typeSpan.textContent = type;
+                
+                const countSpan = document.createElement('span');
+                countSpan.className = 'badge bg-primary';
+                countSpan.textContent = count;
+                
+                row.appendChild(typeSpan);
+                row.appendChild(countSpan);
+                statsDiv.appendChild(row);
+            });
+        }
+        
+        // Event listeners
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize Socket.IO
+            initSocketIO();
+            
+            // Start button
+            startBtn.addEventListener('click', startRecording);
+            
+            // Stop button
+            stopBtn.addEventListener('click', stopRecording);
+            
+            // Clear events button
+            document.getElementById('clear-events').addEventListener('click', function() {
+                const eventsPanel = document.getElementById('events-panel');
+                eventsPanel.innerHTML = `
+                    <div class="list-group-item text-center text-muted">
+                        No events detected yet
+                    </div>
+                `;
+                
+                // Reset stats
+                eventsReceived = 0;
+                eventsByType = {};
+                document.getElementById('total-events-count').textContent = '0';
+                document.getElementById('event-type-stats').innerHTML = '';
+            });
+            
+            // Threshold slider
+            thresholdSlider.addEventListener('input', function() {
+                DETECTION_THRESHOLD = parseFloat(this.value);
+                thresholdValue.textContent = DETECTION_THRESHOLD.toFixed(2);
+                
+                // Send threshold to server
+                if (socket && socket.connected) {
+                    socket.emit('set_threshold', { threshold: DETECTION_THRESHOLD });
+                }
+            });
+            
+            // Test detection button
+            document.getElementById('test-detection-btn').addEventListener('click', function() {
+                fetch('/test_detection')
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Test detection triggered:', data);
+                    })
+                    .catch(error => {
+                        console.error('Error triggering test detection:', error);
+                    });
+            });
+            
+            // Test email button
+            document.getElementById('test-email-btn').addEventListener('click', function() {
+                const button = this;
+                button.disabled = true;
+                button.textContent = 'Sending...';
+                
+                fetch('/test_email')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert('Test email sent successfully! Check your inbox.');
+                        } else {
+                            alert('Error sending test email. Check server logs for details.');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error testing email:', error);
+                        alert('Error testing email: ' + error.message);
+                    })
+                    .finally(() => {
+                        button.disabled = false;
+                        button.textContent = 'Test Email';
+                    });
+            });
+            
+            // Handle window resize
+            window.addEventListener('resize', function() {
+                visualizer.width = visualizer.offsetWidth;
+                visualizer.height = visualizer.offsetHeight;
+                if (isRecording) {
+                    visualizeAudio();
+                }
+            });
+            
+            // Also support Server-Sent Events for browsers that don't work well with Socket.IO
+            function setupSSE() {
+                const eventSource = new EventSource('/api/events');
+                
+                eventSource.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.event && data.event !== 'heartbeat' && data.event !== 'connected') {
+                            displayEvent(data);
+                        }
+                    } catch (error) {
+                        console.error('Error processing SSE event:', error);
+                    }
+                };
+                
+                eventSource.onerror = function(error) {
+                    console.error('SSE error:', error);
+                    eventSource.close();
+                    // Try to reconnect after delay
+                    setTimeout(setupSSE, 5000);
+                };
+            }
+            
+            // Setup SSE as a fallback
+            if (typeof io === 'undefined') {
+                console.log('Socket.IO not available, falling back to SSE');
+                setupSSE();
+            }
+        });
+        
+        // Handle API polling for browsers without Socket.IO or SSE support
+        function startPolling() {
+            let lastPollTime = 0;
+            
+            function pollForEvents() {
+                fetch(`/api/detections?start_time=${lastPollTime}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.detections && data.detections.length > 0) {
+                            // Process newest events first
+                            const sortedEvents = data.detections.sort((a, b) => a.timestamp - b.timestamp);
+                            
+                            for (const event of sortedEvents) {
+                                displayEvent(event);
+                                lastPollTime = Math.max(lastPollTime, event.timestamp);
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error polling for events:', error);
+                    })
+                    .finally(() => {
+                        // Poll again after delay
+                        setTimeout(pollForEvents, 2000);
+                    });
+            }
+            
+            // Start polling immediately
+            pollForEvents();
+        }
+        
+        // Start polling as last resort
+        if (typeof io === 'undefined' && typeof EventSource === 'undefined') {
+            console.log('Neither Socket.IO nor SSE available, falling back to polling');
+            document.addEventListener('DOMContentLoaded', startPolling);
+        }
+    </script>
+</body>
+</html>

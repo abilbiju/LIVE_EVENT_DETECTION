@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Event Detection</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            background-color: #2C3E50;
+            color: white;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .header h1 {
+            margin: 0;
+        }
+        .status-bar {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .status-item {
+            flex: 1;
+            text-align: center;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .active {
+            background-color: #27AE60;
+            color: white;
+        }
+        .inactive {
+            background-color: #ECF0F1;
+            color: #7F8C8D;
+        }
+        .card {
+            background-color: #fff;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .card h2 {
+            margin-top: 0;
+            color: #2C3E50;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .card-content {
+            margin-top: 20px;
+        }
+        .button-row {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+        .primary-btn {
+            background-color: #3498DB;
+            color: white;
+        }
+        .primary-btn:hover {
+            background-color: #2980B9;
+        }
+        .secondary-btn {
+            background-color: #27AE60;
+            color: white;
+        }
+        .secondary-btn:hover {
+            background-color: #219955;
+        }
+        .danger-btn {
+            background-color: #E74C3C;
+            color: white;
+        }
+        .danger-btn:hover {
+            background-color: #C0392B;
+        }
+        .disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .events-panel {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        .event-item {
+            padding: 10px;
+            margin-bottom: 5px;
+            border-left: 4px solid #3498DB;
+            background-color: #ECF0F1;
+        }
+        .event-item.warning {
+            border-left-color: #F39C12;
+        }
+        .event-item.danger {
+            border-left-color: #E74C3C;
+        }
+        .progress-container {
+            width: 100%;
+            background-color: #ECF0F1;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+        .progress-bar {
+            height: 20px;
+            border-radius: 5px;
+            background-color: #3498DB;
+            width: 0%;
+            transition: width 0.3s;
+            text-align: center;
+            color: white;
+            font-weight: bold;
+            line-height: 20px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Live Audio Event Detection</h1>
+            <p>Real-time detection of important audio events</p>
+        </div>
+
+        <div class="status-bar">
+            <div id="model-status" class="status-item {{ 'active' if model_exists else 'inactive' }}">
+                Model: {{ "Loaded" if model_exists else "Not Available" }}
+            </div>
+            <div id="detection-status" class="status-item {{ 'active' if app_state['detection_running'] else 'inactive' }}">
+                Detection: {{ "Running" if app_state['detection_running'] else "Stopped" }}
+            </div>
+            <div id="preprocessing-status" class="status-item {{ 'active' if app_state['preprocessing_running'] else 'inactive' }}">
+                Preprocessing: {{ "Running" if app_state['preprocessing_running'] else "Idle" }}
+            </div>
+            <div id="training-status" class="status-item {{ 'active' if app_state['training_running'] else 'inactive' }}">
+                Training: {{ "Running" if app_state['training_running'] else "Idle" }}
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h2>Live Detection</h2>
+                <div class="card-content">
+                    <p>Start or stop the live audio event detection system.</p>
+                    {% if model_exists %}
+                    <div class="button-row">
+                        <button id="start-detection-btn" class="primary-btn" {{ 'disabled class="disabled"' if app_state['detection_running'] else '' }}>
+                            Start Detection
+                        </button>
+                        <button id="stop-detection-btn" class="danger-btn" {{ 'disabled class="disabled"' if not app_state['detection_running'] else '' }}>
+                            Stop Detection
+                        </button>
+                        <button id="test-detection-btn" class="secondary-btn" {{ 'disabled class="disabled"' if not model_exists else '' }}>
+                            Test Detection
+                        </button>
+                    </div>
+                    <p><a href="/detection" target="_blank">Open Detection Interface</a></p>
+                    {% else %}
+                    <p>No trained model found. Please train a model first.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Recent Events</h2>
+                <div class="card-content">
+                    <div id="events-panel" class="events-panel">
+                        <p id="no-events-message">No recent events.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Audio Recording</h2>
+                <div class="card-content">
+                    <p>Record audio samples for training the model.</p>
+                    <div class="button-row">
+                        <button id="open-recorder-btn" class="primary-btn">Open Audio Recorder</button>
+                    </div>
+                    <div>
+                        <h4>Available Categories:</h4>
+                        <ul id="categories-list">
+                            {% for category in categories %}
+                            <li>{{ category }}</li>
+                            {% else %}
+                            <li>No categories defined</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Data Preprocessing</h2>
+                <div class="card-content">
+                    <p>Preprocess audio data for model training.</p>
+                    <div>
+                        <label for="source-dir">Source Directory:</label>
+                        <select id="source-dir">
+                            <option value="audio">audio</option>
+                            {% for folder in audio_folders %}
+                            <option value="audio/{{ folder }}">audio/{{ folder }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label for="frame-length">Frame Length:</label>
+                        <input type="number" id="frame-length" value="1024" min="256" max="4096" step="256">
+                    </div>
+                    <div class="button-row">
+                        <button id="start-preprocess-btn" class="primary-btn" {{ 'disabled class="disabled"' if app_state['preprocessing_running'] else '' }}>
+                            Start Preprocessing
+                        </button>
+                    </div>
+                    <div id="preprocess-progress-container" class="progress-container" style="display: none;">
+                        <div id="preprocess-progress" class="progress-bar" style="width: 0%;">0%</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Model Training</h2>
+                <div class="card-content">
+                    <p>Train the audio event detection model.</p>
+                    <div>
+                        <label for="epochs">Epochs:</label>
+                        <input type="number" id="epochs" value="20" min="1" max="100">
+                    </div>
+                    <div>
+                        <label for="batch-size">Batch Size:</label>
+                        <input type="number" id="batch-size" value="32" min="8" max="128" step="8">
+                    </div>
+                    <div class="button-row">
+                        <button id="start-training-btn" class="primary-btn" {{ 'disabled class="disabled"' if app_state['training_running'] else '' }}>
+                            Start Training
+                        </button>
+                    </div>
+                    <div id="training-progress-container" class="progress-container" style="display: none;">
+                        <div id="training-progress" class="progress-bar" style="width: 0%;">0%</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize SocketIO connection
+        const socket = io();
+        let isDetectionRunning = {{ 'true' if app_state['detection_running'] else 'false' }};
+        let isPreprocessingRunning = {{ 'true' if app_state['preprocessing_running'] else 'false' }};
+        let isTrainingRunning = {{ 'true' if app_state['training_running'] else 'false' }};
+
+        // DOM elements
+        const modelStatus = document.getElementById('model-status');
+        const detectionStatus = document.getElementById('detection-status');
+        const preprocessingStatus = document.getElementById('preprocessing-status');
+        const trainingStatus = document.getElementById('training-status');
+        const startDetectionBtn = document.getElementById('start-detection-btn');
+        const stopDetectionBtn = document.getElementById('stop-detection-btn');
+        const testDetectionBtn = document.getElementById('test-detection-btn');
+        const openRecorderBtn = document.getElementById('open-recorder-btn');
+        const startPreprocessBtn = document.getElementById('start-preprocess-btn');
+        const preprocessProgressContainer = document.getElementById('preprocess-progress-container');
+        const preprocessProgress = document.getElementById('preprocess-progress');
+        const startTrainingBtn = document.getElementById('start-training-btn');
+        const trainingProgressContainer = document.getElementById('training-progress-container');
+        const trainingProgress = document.getElementById('training-progress');
+        const eventsPanel = document.getElementById('events-panel');
+        const noEventsMessage = document.getElementById('no-events-message');
+
+        // Socket event handlers
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            updateStatusDisplay();
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+        });
+
+        socket.on('status_update', (data) => {
+            console.log('Status update:', data);
+            if (data.hasOwnProperty('detection_running')) {
+                isDetectionRunning = data.detection_running;
+                updateDetectionStatus();
+            }
+            if (data.hasOwnProperty('preprocessing_running')) {
+                isPreprocessingRunning = data.preprocessing_running;
+                updatePreprocessingStatus();
+            }
+            if (data.hasOwnProperty('training_running')) {
+                isTrainingRunning = data.training_running;
+                updateTrainingStatus();
+            }
+        });
+
+        socket.on('preprocess_progress', (data) => {
+            console.log('Preprocess progress:', data);
+            if (preprocessProgressContainer.style.display === 'none') {
+                preprocessProgressContainer.style.display = 'block';
+            }
+            preprocessProgress.style.width = `${data.progress}%`;
+            preprocessProgress.textContent = `${data.progress}%`;
+        });
+
+        socket.on('training_progress', (data) => {
+            console.log('Training progress:', data);
+            if (trainingProgressContainer.style.display === 'none') {
+                trainingProgressContainer.style.display = 'block';
+            }
+            trainingProgress.style.width = `${data.progress}%`;
+            trainingProgress.textContent = `${data.progress}% (Epoch ${data.epoch}/${data.total_epochs})`;
+        });
+
+        socket.on('detection_event', (data) => {
+            console.log('Detection event:', data);
+            if (noEventsMessage) {
+                noEventsMessage.style.display = 'none';
+            }
+            
+            const eventDiv = document.createElement('div');
+            const isEnvAudio = data.event === 'env_audio';
+            eventDiv.className = isEnvAudio ? 'event-item' : 'event-item danger';
+            
+            const time = new Date(data.timestamp * 1000).toLocaleTimeString();
+            eventDiv.textContent = `${time}: ${data.event} (${(data.confidence * 100).toFixed(1)}%)`;
+            
+            eventsPanel.insertBefore(eventDiv, eventsPanel.firstChild);
+            
+            // Limit number of events displayed
+            while (eventsPanel.children.length > 30) {
+                eventsPanel.removeChild(eventsPanel.lastChild);
+            }
+        });
+
+        // Button event handlers
+        startDetectionBtn.addEventListener('click', () => {
+            if (!isDetectionRunning) {
+                fetch('/start_detection', { 
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        isDetectionRunning = true;
+                        updateDetectionStatus();
+                        alert('Detection started');
+                    } else {
+                        alert(`Error: ${data.message}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert(`Error: ${error.message}`);
+                });
+            }
+        });
+
+        stopDetectionBtn.addEventListener('click', () => {
+            if (isDetectionRunning) {
+                fetch('/stop_detection', { 
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        isDetectionRunning = false;
+                        updateDetectionStatus();
+                        alert('Detection stopped');
+                    } else {
+                        alert(`Error: ${data.message}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert(`Error: ${error.message}`);
+                });
+            }
+        });
+
+        testDetectionBtn.addEventListener('click', () => {
+            fetch('/test_detection')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Test detection initiated');
+                    } else {
+                        alert(`Error: ${data.message}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert(`Error: ${error.message}`);
+                });
+        });
+
+        openRecorderBtn.addEventListener('click', () => {
+            window.open('/audio_recorder', '_blank');
+        });
+
+        startPreprocessBtn.addEventListener('click', () => {
+            if (!isPreprocessingRunning) {
+                const sourceDir = document.getElementById('source-dir').value;
+                const frameLength = document.getElementById('frame-length').value;
+                
+                fetch('/start_preprocessing', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        source_dir: sourceDir,
+                        frame_length: parseInt(frameLength),
+                        hop_length: parseInt(frameLength) / 2
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        isPreprocessingRunning = true;
+                        updatePreprocessingStatus();
+                        preprocessProgressContainer.style.display = 'block';
+                        preprocessProgress.style.width = '0%';
+                        preprocessProgress.textContent = '0%';
+                    } else {
+                        alert(`Error: ${data.message}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert(`Error: ${error.message}`);
+                });
+            }
+        });
+
+        startTrainingBtn.addEventListener('click', () => {
+            if (!isTrainingRunning) {
+                const epochs = document.getElementById('epochs').value;
+                const batchSize = document.getElementById('batch-size').value;
+                
+                fetch('/start_training', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        dataset_dir: 'datasets',
+                        epochs: parseInt(epochs),
+                        batch_size: parseInt(batchSize),
+                        validation_split: 0.2
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        isTrainingRunning = true;
+                        updateTrainingStatus();
+                        trainingProgressContainer.style.display = 'block';
+                        trainingProgress.style.width = '0%';
+                        trainingProgress.textContent = '0%';
+                    } else {
+                        alert(`Error: ${data.message}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert(`Error: ${error.message}`);
+                });
+            }
+        });
+
+        // Helper functions
+        function updateStatusDisplay() {
+            updateDetectionStatus();
+            updatePreprocessingStatus();
+            updateTrainingStatus();
+        }
+
+        function updateDetectionStatus() {
+            if (isDetectionRunning) {
+                detectionStatus.textContent = 'Detection: Running';
+                detectionStatus.className = 'status-item active';
+                startDetectionBtn.disabled = true;
+                startDetectionBtn.classList.add('disabled');
+                stopDetectionBtn.disabled = false;
+                stopDetectionBtn.classList.remove('disabled');
+            } else {
+                detectionStatus.textContent = 'Detection: Stopped';
+                detectionStatus.className = 'status-item inactive';
+                startDetectionBtn.disabled = false;
+                startDetectionBtn.classList.remove('disabled');
+                stopDetectionBtn.disabled = true;
+                stopDetectionBtn.classList.add('disabled');
+            }
+        }
+
+        function updatePreprocessingStatus() {
+            if (isPreprocessingRunning) {
+                preprocessingStatus.textContent = 'Preprocessing: Running';
+                preprocessingStatus.className = 'status-item active';
+                startPreprocessBtn.disabled = true;
+                startPreprocessBtn.classList.add('disabled');
+            } else {
+                preprocessingStatus.textContent = 'Preprocessing: Idle';
+                preprocessingStatus.className = 'status-item inactive';
+                startPreprocessBtn.disabled = false;
+                startPreprocessBtn.classList.remove('disabled');
+            }
+        }
+
+        function updateTrainingStatus() {
+            if (isTrainingRunning) {
+                trainingStatus.textContent = 'Training: Running';
+                trainingStatus.className = 'status-item active';
+                startTrainingBtn.disabled = true;
+                startTrainingBtn.classList.add('disabled');
+            } else {
+                trainingStatus.textContent = 'Training: Idle';
+                trainingStatus.className = 'status-item inactive';
+                startTrainingBtn.disabled = false;
+                startTrainingBtn.classList.remove('disabled');
+            }
+        }
+
+        // Initialize UI based on current state
+        document.addEventListener('DOMContentLoaded', function() {
+            updateStatusDisplay();
+            
+            // Add existing events to the panel if available
+            {% if app_state['recent_events'] %}
+                noEventsMessage.style.display = 'none';
+                {% for event in app_state['recent_events'] %}
+                    const eventDiv = document.createElement('div');
+                    const isEnvAudio = '{{ event.event }}' === 'env_audio';
+                    eventDiv.className = isEnvAudio ? 'event-item' : 'event-item danger';
+                    
+                    const time = new Date({{ event.timestamp }} * 1000).toLocaleTimeString();
+                    eventDiv.textContent = `${time}: {{ event.event }} ({{ (event.confidence * 100)|round(1) }}%)`;
+                    
+                    eventsPanel.appendChild(eventDiv);
+                {% endfor %}
+            {% endif %}
+        });
+    </script>
+</body>
+</html>
